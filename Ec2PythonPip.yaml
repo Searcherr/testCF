@@ -1,0 +1,64 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+  SSHLocation:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+    ConstraintDescription: Must be a valid IP CIDR range of the form x.x.x.x/x.
+
+Resources:
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      SecurityGroups:
+        - !Ref InstanceSecurityGroup
+      KeyName: !Ref KeyName
+      ImageId: ami-0b898040803850657 # Example AMI ID, replace with current Amazon Linux 2 AMI for your region
+      UserData:
+        Fn::Base64: 
+          !Sub |
+            #!/bin/bash
+            yum update -y
+            yum install -y python3
+            curl -O https://bootstrap.pypa.io/get-pip.py
+            python3 get-pip.py
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: !Ref SSHLocation
+
+Outputs:
+  InstalledApplications:
+    Description: List of installed applications
+    Value: Python, pip
+  InstanceId:
+    Description: The Instance ID of the created EC2 instance
+    Value: !Ref EC2Instance
+  PublicIP:
+    Description: The public IP address of the EC2 instance
+    Value: !GetAtt EC2Instance.PublicIp
+  PublicDNS:
+    Description: The public DNS name of the EC2 instance
+    Value: !GetAtt EC2Instance.PublicDnsName
