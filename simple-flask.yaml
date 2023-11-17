@@ -1,0 +1,123 @@
+Parameters:
+  NameOfService:
+    Description: "The name of the service this stack is to be used for."
+    Type: String
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access into the server
+    Type: AWS::EC2::KeyPair::KeyName
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      AMI: ami-1853ac65
+    us-west-1:
+      AMI: ami-bf5540df
+    eu-west-1:
+      AMI: ami-3bfab942
+    ap-southeast-1:
+      AMI: ami-e2adf99e
+    ap-southeast-2:
+      AMI: ami-43874721    
+
+Resources:
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Metadata: 
+      AWS::CloudFormation::Init:
+        config: 
+          packages: 
+            yum:
+              nginx: []
+              python3: []
+              python3-pip: []
+          commands:
+            01_install_gunicorn:
+              command: "pip3 install gunicorn"
+            02_create_flask_app_directory:
+              command: "mkdir -p /home/ec2-user/flask-app"
+            03_create_flask_app:
+              command: !Sub |
+                echo "from flask import Flask
+app = Flask(__name__)
+
+@app.route('/')
+def hello():
+    return 'Hello Baxter!'
+
+if __name__ == '__main__':
+    app.run()" > /home/ec2-user/flask-app/app.py
+          services: 
+            sysvinit:
+              nginx:
+                enabled: true
+                ensureRunning: true
+              gunicorn:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - "/etc/systemd/system/gunicorn.service"
+                commands:
+                  01_reload_daemon:
+                    command: "systemctl daemon-reload"
+                  02_start_gunicorn:
+                    command: "systemctl start gunicorn"
+    Properties:
+      InstanceType: t2.micro
+      ImageId:
+        Fn::FindInMap:
+        - RegionMap
+        - !Ref AWS::Region
+        - AMI
+      SecurityGroupIds:
+        - !Ref MySecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Ref NameOfService
+      KeyName: !Ref KeyName
+      UserData:
+        'Fn::Base64': 
+          !Sub |
+            #!/bin/bash -xe            
+            # Ensure AWS CFN Bootstrap is the latest
+            yum install -y aws-cfn-bootstrap
+            # Install the files and packages from the metadata
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource EC2Instance  --region ${AWS::Region}
+            # Create gunicorn systemd service file
+            echo "[Unit]
+Description=Gunicorn instance to serve Flask app
+After=network.target
+
+[Service]
+User=ec2-user
+Group=nogroup
+WorkingDirectory=/home/ec2-user/flask-app
+ExecStart=/usr/local/bin/gunicorn --workers 1 --bind 0.0.0.0:8000 app:app
+
+[Install]
+WantedBy=multi-user.target" > /etc/systemd/system/gunicorn.service
+            systemctl daemon-reload
+            systemctl start gunicorn
+            systemctl enable gunicorn
+
+  MySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Open Ports 22, 80, and 8000
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '22'
+        ToPort: '22'
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: '8000'
+        ToPort: '8000'
+        CidrIp: 0.0.0.0/0
+
+Outputs:
+  Website:
+    Description: The Public DNS for the EC2 Instance
+    Value: !Sub 'http://${EC2Instance.PublicDnsName}'
